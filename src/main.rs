@@ -1,17 +1,14 @@
 mod body;
 
 use ::rand::{Rng, SeedableRng, rngs::StdRng};
-use body::{BODIES_N, Body, BodyID};
+use body::{BODIES_N, Body, BodyID, INITIAL_ABS_SPEED, INITIAL_MASS, RADIUS_MULTIPLIER};
 use macroquad::prelude::*;
 use num_complex::{Complex, ComplexFloat};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     f64::consts::{PI, SQRT_2},
     num::NonZero,
 };
-
-const INITIAL_MASS: f64 = 1.0;
-const INITIAL_ABS_SPEED: f64 = 0.05;
 
 const DT: f64 = 1.0;
 
@@ -36,7 +33,7 @@ async fn main() {
         next_frame().await;
     }
 
-    let mut bodies = HashMap::with_capacity(BODIES_N.get());
+    let mut bodies_a = HashMap::with_capacity(BODIES_N.get());
 
     let center = Complex::new(screen_width() as f64 / 2.0, screen_height() as f64 / 2.0);
     let initial_body_radius = Body::get_radius(INITIAL_MASS);
@@ -76,22 +73,43 @@ async fn main() {
                 speed: Complex::from_polar(INITIAL_ABS_SPEED, rng.random_range(0.0..2.0 * PI)),
                 mass: INITIAL_MASS,
                 radius: initial_body_radius,
-                color: WHITE,
             };
-            bodies.insert(BodyID::now(), body);
+            bodies_a.insert(BodyID::now(), body);
 
             break;
         }
     }
 
+    let mut bodies_b = bodies_a.clone();
+
     loop {
-        for body in bodies.values() {
-            draw_circle(
-                body.pos.re() as f32,
-                body.pos.im() as f32,
-                body.radius as f32,
-                body.color,
-            );
+        let mut to_remove = Vec::new();
+
+        for (hashmap, lambda, color) in [
+            (&mut bodies_b, None, BLUE),
+            (&mut bodies_a, Some(DT), WHITE),
+        ] {
+            Body::update_bodies(lambda, hashmap);
+
+            for (body_id, body) in hashmap.iter() {
+                if !(0.0..screen_width() as f64).contains(&body.pos.re())
+                    || !(0.0..screen_height() as f64).contains(&body.pos.im())
+                {
+                    to_remove.push(*body_id);
+                }
+                draw_circle(
+                    body.pos.re() as f32,
+                    body.pos.im() as f32,
+                    (body.radius * RADIUS_MULTIPLIER) as f32,
+                    color,
+                );
+            }
+        }
+
+        for body_id in &to_remove {
+            for hashmap in [&mut bodies_a, &mut bodies_b] {
+                hashmap.remove(body_id);
+            }
         }
 
         next_frame().await;
