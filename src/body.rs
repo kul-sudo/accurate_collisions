@@ -5,7 +5,7 @@ use std::{collections::HashMap, num::NonZero, time::Instant};
 
 pub const BODIES_N: NonZero<usize> = NonZero::new(300).unwrap();
 
-pub const INITIAL_MASS: f64 = 0.07;
+pub const INITIAL_MASS: f64 = 0.05;
 pub const INITIAL_ABS_SPEED: f64 = 0.9;
 
 pub const RADIUS_MULTIPLIER: f64 = 5.0;
@@ -90,12 +90,14 @@ impl Body {
             }
         }
     }
-    pub fn get_earliest_collision(
-        time_lower_bound: f64,
-        bodies: &mut HashMap<BodyID, Body>,
-    ) -> Option<(f64, [BodyID; 2])> {
+
+    pub fn get_collision_info(
+        bodies: &HashMap<BodyID, Body>,
+    ) -> (bool, Option<(f64, [BodyID; 2])>) {
         let mut earliest_collision_time = f64::INFINITY;
         let mut earliest_collision_pair: Option<[BodyID; 2]> = None;
+
+        let mut impossible_positions = false;
 
         for (lhs_body_id, lhs_body) in bodies.iter() {
             for (rhs_body_id, rhs_body) in bodies.iter() {
@@ -116,44 +118,72 @@ impl Body {
                     let d = b.powi(2) - 4.0 * a * c;
 
                     let d_sqrt = d.sqrt();
-                    if !d_sqrt.is_nan() // sqrt(n < 0) = NaN
-                    && d_sqrt >= b
-                    {
-                        let t_min = -(b + d_sqrt) / (2.0 * a);
+                    if !d_sqrt.is_nan() {
+                        // sqrt(n < 0) = NaN
+                        if d_sqrt >= b {
+                            let t_min = -(b + d_sqrt) / (2.0 * a);
 
-                        if t_min <= time_lower_bound && t_min < earliest_collision_time {
-                            earliest_collision_time = t_min;
-                            earliest_collision_pair = Some([*lhs_body_id, *rhs_body_id]);
+                            if t_min < earliest_collision_time {
+                                earliest_collision_time = t_min;
+                                earliest_collision_pair = Some([*lhs_body_id, *rhs_body_id]);
+                            }
+                        } else {
+                            impossible_positions = true;
                         }
                     }
                 }
             }
         }
 
-        earliest_collision_pair.map(|pair| (earliest_collision_time, pair))
+        (
+            impossible_positions,
+            earliest_collision_pair.map(|pair| (earliest_collision_time, pair)),
+        )
     }
 
-    pub fn update_bodies(maybe_lambda: Option<f64>, bodies: &mut HashMap<BodyID, Body>) {
+    pub fn update_bodies(maybe_lambda: Option<f64>, bodies: &mut HashMap<BodyID, Body>) -> bool {
         match maybe_lambda {
             Some(lambda) => {
-                let collision = Self::get_earliest_collision(lambda, bodies);
-                match collision {
+                let (_, earliest_collision) = Self::get_collision_info(bodies);
+
+                match earliest_collision {
                     Some((time, pair)) => {
-                        for body in bodies.values_mut() {
-                            body.pos += body.speed * time;
+                        for body_id in pair {
+                            let body = bodies.get(&body_id).unwrap();
+                            let collision_pos = body.pos + body.speed * time;
+                            draw_line(
+                                body.pos.re() as f32,
+                                body.pos.im() as f32,
+                                collision_pos.re() as f32,
+                                collision_pos.im() as f32,
+                                5.0,
+                                RED,
+                            );
                         }
 
-                        Self::connect(pair, bodies);
-                        Self::connect_all(bodies);
+                        if time <= lambda {
+                            for body in bodies.values_mut() {
+                                body.pos += body.speed * time;
+                            }
 
-                        if time < lambda {
-                            Self::update_bodies(Some(lambda - time), bodies)
+                            Self::connect(pair, bodies);
+                            Self::connect_all(bodies);
+
+                            if time < lambda {
+                                return Self::update_bodies(Some(lambda - time), bodies);
+                            }
+                        } else {
+                            for body in bodies.values_mut() {
+                                body.pos += body.speed * lambda;
+                            }
                         }
                     }
                     None => {
                         for body in bodies.values_mut() {
                             body.pos += body.speed * lambda;
                         }
+
+                        return true;
                     }
                 }
             }
@@ -165,6 +195,8 @@ impl Body {
                 Self::connect_all(bodies);
             }
         }
+
+        false
     }
 
     //pub fn get_collisions(bodies: &mut HashMap<BodyID, Body>) -> [Option<(f64, [BodyID; 2])>; 2] {
